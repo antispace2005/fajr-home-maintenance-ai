@@ -317,6 +317,25 @@ export default function AdminDashboard({ onLogout }) {
     }
   };
 
+  const handleCancelBooking = async (booking) => {
+    if (!window.confirm(`Are you sure you want to cancel booking #${booking.reference_no}? This will release the technician slot capacity.`)) {
+      return;
+    }
+    try {
+      const res = await authFetch(`/api/admin/bookings/${booking.id}/cancel`, {
+        method: 'POST'
+      });
+      if (!res.ok) {
+        throw new Error('Failed to cancel booking');
+      }
+      showNotification('success', `Booking #${booking.reference_no} cancelled and technician slot released.`);
+      await fetchBookings();
+      fetchSchedule();
+    } catch (err) {
+      showNotification('error', err.message);
+    }
+  };
+
   const handleUpdateSlotCapacity = async (slot, delta) => {
     const newCapacity = Math.max(0, slot.capacity + delta);
     try {
@@ -503,6 +522,13 @@ export default function AdminDashboard({ onLogout }) {
       return (
         <span className="badge-rejected">
           <XCircle className="w-3.5 h-3.5 mr-1" /> Rejected
+        </span>
+      );
+    }
+    if (s === 'cancelled') {
+      return (
+        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+          <XCircle className="w-3.5 h-3.5 mr-1 text-slate-400" /> Cancelled
         </span>
       );
     }
@@ -921,6 +947,15 @@ export default function AdminDashboard({ onLogout }) {
                               >
                                 <Edit2 className="w-3.5 h-3.5" /> Edit Decision
                               </button>
+                              {b.status !== 'cancelled' && b.status !== 'rejected' && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleCancelBooking(b)}
+                                  className="flex-1 lg:w-full inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded-xl text-xs font-medium text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition-colors cursor-pointer"
+                                >
+                                  <X className="w-3.5 h-3.5" /> Cancel Visit
+                                </button>
+                              )}
                             </div>
                           )}
                         </div>

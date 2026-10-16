@@ -16,6 +16,32 @@ import {
 
 const API_BASE = '/api';
 
+function FormattedText({ text }) {
+  if (!text) return null;
+  const lines = text.split('\n');
+  return (
+    <div className="space-y-1">
+      {lines.map((line, i) => {
+        if (!line.trim()) return <div key={i} className="h-1.5" />;
+        const parts = line.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
+        return (
+          <p key={i} className="leading-relaxed">
+            {parts.map((p, j) => {
+              if (p.startsWith('**') && p.endsWith('**')) {
+                return <strong key={j} className="font-semibold text-slate-900">{p.slice(2, -2)}</strong>;
+              }
+              if (p.startsWith('`') && p.endsWith('`')) {
+                return <code key={j} className="px-1.5 py-0.5 rounded bg-slate-200/80 text-brand-800 text-xs font-mono font-medium">{p.slice(1, -1)}</code>;
+              }
+              return p;
+            })}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function CustomerChat() {
   const [messages, setMessages] = useState([]);
   const [businessInfo, setBusinessInfo] = useState(null);
@@ -319,10 +345,8 @@ export default function CustomerChat() {
                       ? 'bg-slate-100 text-slate-800 border border-slate-200/80 rounded-tl-sm' 
                       : 'bg-brand-600 text-white rounded-tr-sm shadow-xs'
                   }`}>
-                    {/* Render message body with basic formatting */}
-                    <div className="whitespace-pre-line">
-                      {msg.content}
-                    </div>
+                    {/* Render message body with formatted markdown */}
+                    <FormattedText text={msg.content} />
 
                     {/* Pre-Booking Summary Card if present */}
                     {msg.summaryCard && (

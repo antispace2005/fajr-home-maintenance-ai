@@ -99,8 +99,30 @@ def reject_booking(
     if payload and payload.owner_notes is not None:
         booking.owner_notes = payload.owner_notes
 
-    if previous_status == "approved" and booking.slot and booking.slot.booked_count > 0:
-        booking.slot.booked_count -= 1
+    # Release slot capacity if booking was previously confirmed or approved
+    if previous_status.lower() in ["confirmed", "approved"] and booking.slot and booking.slot.booked_count > 0:
+        booking.slot.booked_count = max(0, booking.slot.booked_count - 1)
+
+    db.commit()
+    db.refresh(booking)
+    return booking
+
+
+@router.post("/bookings/{id}/cancel", response_model=BookingResponse)
+def cancel_booking(
+    id: int,
+    db: Session = Depends(get_db)
+):
+    booking = db.query(Booking).filter(Booking.id == id).first()
+    if not booking:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+
+    previous_status = booking.status
+    booking.status = "cancelled"
+
+    # Release slot capacity if booking was previously confirmed or approved
+    if previous_status.lower() in ["confirmed", "approved"] and booking.slot and booking.slot.booked_count > 0:
+        booking.slot.booked_count = max(0, booking.slot.booked_count - 1)
 
     db.commit()
     db.refresh(booking)

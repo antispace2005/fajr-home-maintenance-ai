@@ -84,7 +84,8 @@ def deterministic_pre_extract(text: str, current_state: BookingState) -> Dict[st
             # Name in part (must be letters, not containing keywords)
             elif re.match(r"^[A-Za-z\s]{3,35}$", p) and not extracted.get("customer_name") and not current_state.get("customer_name"):
                 if not any(w in p_lower for w in ["ac", "plumbing", "tuesday", "wednesday", "book", "yes", "confirm", "phone", "fakephone", "fakeadress", "service", "inspect"]):
-                    extracted["customer_name"] = p
+                    clean_name = re.sub(r"^(?:my\s+name\s+is|name\s+is|i\s+am|i'm|this\s+is)\s*", "", p, flags=re.IGNORECASE).strip()
+                    extracted["customer_name"] = clean_name
 
     # 5. Standalone or regex Phone number
     if not extracted.get("customer_phone") and not current_state.get("customer_phone"):
@@ -94,16 +95,16 @@ def deterministic_pre_extract(text: str, current_state: BookingState) -> Dict[st
 
     # 6. Customer name detection
     if not extracted.get("customer_name") and not current_state.get("customer_name"):
-        name_match = re.search(r"(?:name\s+is|i\s+am|i'm|this\s+is)\s+([A-Za-z\s]{2,30})", text, re.IGNORECASE)
+        name_match = re.search(r"(?:name\s+is|i\s+am|i'm|this\s+is)\s+([A-Za-z]{2,25}(?:\s+[A-Za-z]{2,25}){0,2})", text, re.IGNORECASE)
         if name_match:
             extracted["customer_name"] = name_match.group(1).strip()
         elif re.match(r"^[A-Za-z\s]{3,30}$", text.strip()):
-            # Standalone 1 to 4 words of letters when not a command/service
             words = text.strip().split()
             if 1 <= len(words) <= 4 and not any(w in lower for w in [
                 "ac", "plumbing", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
                 "book", "service", "inspect", "confirm", "yes", "no", "hello", "hi", "hey",
-                "cancel", "status", "check", "fakephone", "help", "view", "available", "times", "prices"
+                "cancel", "status", "check", "fakephone", "help", "view", "available", "times", "prices",
+                "request", "change", "another", "visit", "slot"
             ]):
                 extracted["customer_name"] = text.strip()
 
@@ -114,7 +115,6 @@ def deterministic_pre_extract(text: str, current_state: BookingState) -> Dict[st
             extracted["customer_address"] = addr_match.group(1).strip()
         elif any(k in lower for k in ["abu dhabi", "corniche", "reem", "khalidiyah", "street", "streat", "road", "villa", "bldg", "flat", "apt", "zone", "mussafah"]):
             if not any(w in lower for w in ["what", "how", "when", "who", "why", "can i", "do you", "offer"]):
-                # Clean prefix if user typed "address: Corniche Abu Dhabi"
                 clean_addr = re.sub(r"^(?:my\s+address\s+is|address\s+is|address\s*:)\s*", "", text.strip(), flags=re.IGNORECASE)
                 extracted["customer_address"] = clean_addr
 
@@ -126,7 +126,6 @@ def run_gemini_with_retry(prompt: str, system_instruction: str) -> str:
     api_key = os.getenv("GEMINI_API_KEY", "")
     client = genai.Client(api_key=api_key)
 
-    # Prioritize flash-lite for high throughput and speed, followed by flash
     models_to_try = ["gemini-3.5-flash-lite", "gemini-3.5-flash"]
 
     for model in models_to_try:
@@ -145,7 +144,6 @@ def run_gemini_with_retry(prompt: str, system_instruction: str) -> str:
             if "429" in str(e):
                 time.sleep(1.5)
                 continue
-            # Try next model
             continue
         except Exception:
             continue
@@ -156,11 +154,18 @@ def run_gemini_with_retry(prompt: str, system_instruction: str) -> str:
 def booking_agent_step(state: BookingState) -> BookingState:
     """Single-turn unified node: updates state, validates policy, and generates response."""
     user_msg = state.get("user_message", "").strip()
+    user_msg_lower = user_msg.lower()
     history = state.get("conversation_history", [])
 
-    # 1. Check for Reference Number Lookup directly
+    # Fetch live business context from database
+    ctx = get_live_business_context()
+    open_slots = ctx.get("available_slots", [])
+    open_slots_summary = [f"{s.get('day_of_week') or s.get('day')} at {s.get('start_time')}" for s in open_slots]
+    open_slots_text = ", ".join(open_slots_summary) if open_slots_summary else "None (all standard slots are fully booked; custom slots require owner approval)"
+
+    # 1. Reference Number Lookup
     ref_match = re.search(r"AD-2026-\d{4}", user_msg.upper())
-    if ref_match and any(w in user_msg.lower() for w in ["check", "status", "booking", "my request"]):
+    if ref_match and any(w in user_msg_lower for w in ["check", "status", "booking", "my request"]):
         found = query_existing_booking(ref_match.group(0))
         if found:
             note = f"\n• **Owner Note**: {found['owner_notes']}" if found.get("owner_notes") else ""
@@ -177,20 +182,72 @@ def booking_agent_step(state: BookingState) -> BookingState:
             state["action_buttons"] = ["Book Another Visit", "View Services & Prices"]
             return state
 
-    # 2. Check for explicit confirmation
-    confirm_words = ["yes, confirm", "confirm booking", "yes confirm", "please confirm", "confirm", "yes", "proceed", "sure", "ok", "yep", "approved"]
-    is_confirm = any(w in user_msg.lower() for w in confirm_words) and state.get("status") == "AWAITING_CONFIRMATION"
+    # 2. Handle Cancel / Abort
+    if any(w in user_msg_lower for w in ["cancel", "cancel booking", "stop", "abort", "discard", "nevermind"]):
+        state["service_name"] = None
+        state["preferred_time"] = None
+        state["discount_requested"] = False
+        state["discount_notes"] = None
+        state["summary_card"] = None
+        state["status"] = "COLLECTING"
+        state["reply"] = "Your booking request has been cancelled. How else can we assist your home in Abu Dhabi today?"
+        state["action_buttons"] = ["Book AC Servicing (AED 200)", "Book Plumbing Inspection (AED 150)", "Check Available Slots"]
+        return state
 
-    # 3. Smart deterministic pre-extraction
+    # 3. Handle "Book Another Visit" / "Start Over"
+    if any(w in user_msg_lower for w in ["book another", "book another visit", "new booking", "start over", "another service"]):
+        state["service_name"] = None
+        state["preferred_time"] = None
+        state["discount_requested"] = False
+        state["discount_notes"] = None
+        state["summary_card"] = None
+        state["status"] = "COLLECTING"
+        c_name = state.get("customer_name")
+        greeting = f"Welcome back{' ' + c_name if c_name else ''}! Which service would you like to book next?"
+        state["reply"] = greeting
+        state["action_buttons"] = ["Book AC Servicing (AED 200)", "Book Plumbing Inspection (AED 150)", "Check Available Slots"]
+        return state
+
+    # 4. Handle "Change Date or Time" / "Reschedule"
+    if any(w in user_msg_lower for w in ["change date", "change time", "different time", "other slot", "reschedule", "change date or time"]):
+        state["preferred_time"] = None
+        state["summary_card"] = None
+        state["status"] = "COLLECTING"
+        if open_slots_summary:
+            state["reply"] = f"Certainly! Our currently open standard slots are: **{' or '.join(open_slots_summary)}**.\n\nWhich slot works best for you?"
+            state["action_buttons"] = open_slots_summary + ["Request Other Time"]
+        else:
+            state["reply"] = "All standard weekly slots are currently filled. You may request any other day/time (Mon–Sat, 9 AM–6 PM) for owner approval. When would you prefer?"
+            state["action_buttons"] = ["Request Other Time", "View Services & Prices"]
+        return state
+
+    # 5. Handle "Check Available Slots" / "Check Available Times"
+    if any(w in user_msg_lower for w in ["check available slots", "check available times", "available slots", "available times", "open slots"]):
+        if open_slots:
+            slot_bullets = "\n".join([f"• **{s.get('day_of_week') or s.get('day')} at {s.get('start_time')}** ({s.get('remaining_capacity', s.get('capacity', 1) - s.get('booked_count', 0))} tech slot remaining)" for s in open_slots])
+            state["reply"] = (
+                f"Here are our currently open standard slots in Abu Dhabi city:\n\n{slot_bullets}\n\n"
+                f"Any appointment time outside these open slots requires owner approval. Which slot would you prefer?"
+            )
+            state["action_buttons"] = open_slots_summary + ["Request Other Time"]
+        else:
+            state["reply"] = (
+                "All of our standard weekly slots are currently fully booked! You can still request an appointment for any other time between Monday and Saturday (9 AM – 6 PM), and our business owner will review it for approval."
+            )
+            state["action_buttons"] = ["Request Other Time", "View Services & Prices"]
+        return state
+
+    # 6. Check for explicit confirmation
+    confirm_words = ["yes, confirm", "confirm booking", "yes confirm", "please confirm", "confirm", "yes", "proceed", "sure", "ok", "yep", "approved"]
+    is_confirm = any(w in user_msg_lower for w in confirm_words) and state.get("status") == "AWAITING_CONFIRMATION"
+
+    # 7. Smart deterministic pre-extraction
     fast_extracted = deterministic_pre_extract(user_msg, state)
     for k, v in fast_extracted.items():
         if v and not state.get(k):
             state[k] = v
 
-    # 4. Context lookup from PostgreSQL
-    ctx = get_live_business_context()
-
-    # 5. Check if all 5 entities are present
+    # 8. Check if all 5 entities are present
     name = state.get("customer_name")
     phone = state.get("customer_phone")
     address = state.get("customer_address")
@@ -199,7 +256,7 @@ def booking_agent_step(state: BookingState) -> BookingState:
 
     all_entities_ready = bool(name and phone and address and service and preferred_time)
 
-    # 6. If confirmed and all ready -> Save to DB!
+    # 9. If confirmed and all ready -> Save to DB!
     if is_confirm and all_entities_ready:
         res = save_booking_record(
             customer_name=name,
@@ -243,7 +300,7 @@ def booking_agent_step(state: BookingState) -> BookingState:
             state["action_buttons"] = ["Yes, Confirm Booking", "Cancel"]
             return state
 
-    # 7. If all 5 entities are ready but NOT yet confirmed -> Evaluate policy and present pre-booking summary!
+    # 10. If all 5 entities are ready but NOT yet confirmed -> Evaluate policy and present pre-booking summary!
     if all_entities_ready:
         policy = check_slot_and_pricing_policy(
             service_name=service,
@@ -286,7 +343,7 @@ def booking_agent_step(state: BookingState) -> BookingState:
         state["action_buttons"] = ["Yes, Confirm Booking", "Change Date or Time", "Cancel"]
         return state
 
-    # 8. Still missing details -> Generate polite AI reply prompting ONLY for missing details
+    # 11. Still missing details -> Generate polite AI reply prompting ONLY for missing details
     state["status"] = "COLLECTING"
 
     known_details = []
@@ -305,7 +362,10 @@ def booking_agent_step(state: BookingState) -> BookingState:
     if not state.get("service_name"):
         missing_details.append("Service (AC Servicing AED 200 or Plumbing Inspection AED 150)")
     if not state.get("preferred_time"):
-        missing_details.append("Preferred appointment slot (Standard: Tuesday at 10 AM or Wednesday at 2 PM)")
+        if open_slots_summary:
+            missing_details.append(f"Preferred appointment slot (Currently open slots: {open_slots_text})")
+        else:
+            missing_details.append("Preferred appointment slot (all standard slots full; any day Mon-Sat 9am-6pm for approval)")
     if not state.get("customer_name"):
         missing_details.append("Customer full name")
     if not state.get("customer_phone"):
@@ -318,8 +378,8 @@ You are the AI Booking Assistant for Al Fajr Home Maintenance in Abu Dhabi city.
 Coverage: {ctx['coverage']}
 Operating Hours: {ctx['operating_hours']}
 Available services: {', '.join([f"{s['name']} (AED {s['price_aed']})" for s in ctx['services']])}
-Available standard slots: Tuesday at 10:00 AM, Wednesday at 02:00 PM.
-Policy: Out of schedule slots and discounts require owner approval.
+CURRENTLY OPEN STANDARD SLOTS WITH AVAILABLE CAPACITY: {open_slots_text}
+Note: If a slot is not listed above, it is either full or outside standard hours and requires owner approval.
 
 CURRENT KNOWN CUSTOMER DETAILS (DO NOT ASK FOR THESE AGAIN):
 {chr(10).join(['- ' + k for k in known_details]) if known_details else '- None yet'}
@@ -331,7 +391,8 @@ CRITICAL RULES:
 1. NEVER ask for details that are already known above! For example, if Customer Name is known, DO NOT ask for their name!
 2. ONLY ask for the missing details listed above.
 3. NEVER say 'your booking is confirmed', 'you are all set', or 'our technician will be there' yourself! You CANNOT confirm bookings. Confirmation only happens after presenting the formal summary card.
-4. Keep replies friendly, concise, and helpful.
+4. If asked about available times, only state the CURRENTLY OPEN slots: {open_slots_text}.
+5. Keep replies friendly, concise, and helpful.
 """
 
     prompt = f"Customer message: '{user_msg}'\nConversation context: {json.dumps(history[-3:]) if history else 'None'}"
@@ -343,13 +404,16 @@ CRITICAL RULES:
     if not state.get("service_name"):
         buttons = ["Book AC Servicing (AED 200)", "Book Plumbing Inspection (AED 150)"]
     elif not state.get("preferred_time"):
-        buttons = ["Tuesday at 10:00 AM", "Wednesday at 2:00 PM", "Request Other Time"]
+        if open_slots_summary:
+            buttons = open_slots_summary + ["Request Other Time"]
+        else:
+            buttons = ["Request Other Time", "Check Available Slots"]
     elif not state.get("customer_phone"):
         buttons = ["Provide Phone Number"]
     elif not state.get("customer_address"):
         buttons = ["Provide Abu Dhabi Address"]
     else:
-        buttons = ["Check Available Times", "View Services & Prices"]
+        buttons = ["Check Available Slots", "View Services & Prices"]
 
     state["action_buttons"] = buttons
     return state

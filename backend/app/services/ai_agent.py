@@ -38,8 +38,12 @@ def get_live_business_context() -> Dict[str, Any]:
                 available_slots.append({
                     "id": slot.id,
                     "day": slot.day_of_week,
+                    "day_of_week": slot.day_of_week,
                     "time": f"{slot.start_time} - {slot.end_time}",
                     "start_time": slot.start_time,
+                    "end_time": slot.end_time,
+                    "capacity": slot.capacity,
+                    "booked_count": slot.booked_count,
                     "remaining_capacity": remaining
                 })
 
@@ -96,9 +100,20 @@ def check_slot_and_pricing_policy(
         status = "PENDING_APPROVAL" if requires_approval else "CONFIRMED"
         explanation = ""
         if not is_standard_slot and discount_requested:
-            explanation = "Your requested appointment time is outside our standard available slots, and a discount was requested. Both require owner approval and will be submitted as pending."
+            explanation = "Your requested appointment time is outside our open slots, and a discount was requested. Both require owner approval and will be submitted as pending."
         elif not is_standard_slot:
-            explanation = "Your requested appointment time is outside our standard open slots (Tuesday 10 AM or Wednesday 2 PM). This requires owner approval and will be submitted as pending."
+            # Check if user requested a slot that exists but is at capacity
+            full_slot = None
+            for slot in slots:
+                day_match = slot.day_of_week.lower() in time_lower
+                time_match = ("10" in time_lower and "10" in slot.start_time) or ("2" in time_lower and "02" in slot.start_time) or ("14" in time_lower)
+                if day_match and time_match and (slot.capacity - slot.booked_count) <= 0:
+                    full_slot = slot
+                    break
+            if full_slot:
+                explanation = f"The standard slot for {full_slot.day_of_week} at {full_slot.start_time} has reached full technician capacity. Booking this time requires owner approval and will be submitted as pending."
+            else:
+                explanation = "Your requested appointment time is outside our currently open standard slots. This requires owner approval and will be submitted as pending."
         elif discount_requested:
             explanation = "Any discount requires owner approval. Your booking will be submitted with status pending approval."
         else:
