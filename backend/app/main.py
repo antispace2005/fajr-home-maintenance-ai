@@ -20,6 +20,14 @@ except ImportError:
 async def lifespan(app: FastAPI):
     # Ensure database tables exist on startup
     Base.metadata.create_all(bind=engine)
+    try:
+        try:
+            from backend.app.seed import seed
+        except ImportError:
+            from app.seed import seed
+        seed()
+    except Exception as e:
+        print(f"Seeding check: {e}")
     yield
 
 

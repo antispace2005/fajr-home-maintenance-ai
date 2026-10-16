@@ -19,9 +19,11 @@ services:
 
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: home_maintenance_backend
+    env_file:
+      - .env
     environment:
       - DATABASE_URL=postgresql://postgres:postgrespassword@postgres:5432/home_maintenance_db
       - JWT_SECRET=supersecretjwtkey_fajr_maintenance_2026
