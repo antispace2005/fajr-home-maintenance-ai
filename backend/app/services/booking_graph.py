@@ -55,7 +55,7 @@ def deterministic_pre_extract(text: str, current_state: BookingState) -> Dict[st
 
     # 3. Discount request detection
     if not current_state.get("discount_requested"):
-        discount_words = ["discount", "cheaper", "best price", "special price", "offer", "reduction", "% off"]
+        discount_words = ["discount", "cheaper", "best price", "special price", "special offer", "reduction", "% off", "coupon", "promo code"]
         if any(w in lower for w in discount_words):
             extracted["discount_requested"] = True
             extracted["discount_notes"] = text

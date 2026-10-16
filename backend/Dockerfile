@@ -13,8 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . /app/backend/
-COPY app /app/app/
+COPY backend/ /app/backend/
+COPY frontend/dist/ /app/frontend/dist/
 
 EXPOSE 8000
 
