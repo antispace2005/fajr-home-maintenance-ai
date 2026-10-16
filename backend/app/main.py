@@ -46,7 +46,6 @@ app.include_router(public_router)
 app.include_router(chat_router)
 
 
-@app.get("/", tags=["Health"])
 @app.get("/api/health", tags=["Health"])
 def health_check():
     return {
@@ -54,3 +53,27 @@ def health_check():
         "service": "Al Fajr Home Maintenance API",
         "version": "1.0.0",
     }
+
+
+import os
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+frontend_dist = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist")
+)
+
+if os.path.exists(frontend_dist):
+    assets_dir = os.path.join(frontend_dist, "assets")
+    if os.path.exists(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        if full_path.startswith("api/"):
+            return {"error": "API route not found"}
+        target_file = os.path.join(frontend_dist, full_path)
+        if full_path and os.path.isfile(target_file):
+            return FileResponse(target_file)
+        return FileResponse(os.path.join(frontend_dist, "index.html"))
+
