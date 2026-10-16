@@ -143,13 +143,22 @@ def save_booking_record(
     discount_notes: Optional[str] = None
 ) -> Dict[str, Any]:
     """Atomically commit booking to PostgreSQL and generate reference number."""
-    # Strict validation: Abu Dhabi coverage
-    addr_lower = customer_address.lower()
-    if "dubai" in addr_lower and "abu dhabi" not in addr_lower:
-        return {
-            "success": False,
-            "error": "We currently only provide services within Abu Dhabi city."
-        }
+    # Strict validation: Abu Dhabi coverage using OpenStreetMap Nominatim
+    try:
+        from backend.app.services.location_verifier import verify_abu_dhabi_location
+        loc_res = verify_abu_dhabi_location(customer_address)
+        if not loc_res.get("is_valid"):
+            return {
+                "success": False,
+                "error": loc_res.get("reason", "We currently only provide services within Abu Dhabi city.")
+            }
+    except Exception:
+        addr_lower = customer_address.lower()
+        if "dubai" in addr_lower and "abu dhabi" not in addr_lower:
+            return {
+                "success": False,
+                "error": "We currently only provide services within Abu Dhabi city."
+            }
 
     db = SessionLocal()
     try:

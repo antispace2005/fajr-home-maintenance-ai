@@ -75,8 +75,37 @@ def approve_booking(
     elif booking.final_price_aed is None:
         booking.final_price_aed = booking.quoted_price_aed
 
-    if booking.slot and previous_status != "approved":
-        booking.slot.booked_count += 1
+    if previous_status != "approved":
+        if booking.slot:
+            booking.slot.booked_count += 1
+        elif booking.preferred_time_text:
+            import re
+            day_match = re.search(r"(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)", booking.preferred_time_text, re.IGNORECASE)
+            time_match = re.search(r"(\d{1,2}:\d{2}\s*(?:AM|PM))", booking.preferred_time_text, re.IGNORECASE)
+            if day_match and time_match:
+                req_day = day_match.group(1).capitalize()
+                req_time = time_match.group(1).upper()
+                existing_slot = db.query(WeeklySlot).filter(WeeklySlot.day_of_week == req_day, WeeklySlot.start_time == req_time).first()
+                if not existing_slot:
+                    try:
+                        hour_int = int(req_time.split(":")[0])
+                        end_h = 12 if (hour_int % 12) + 2 == 12 else (hour_int % 12) + 2
+                        existing_slot = WeeklySlot(
+                            day_of_week=req_day,
+                            start_time=req_time,
+                            end_time=f"{end_h:02d}:00 {req_time[-2:]}",
+                            capacity=1,
+                            booked_count=1,
+                            is_active=True
+                        )
+                        db.add(existing_slot)
+                        db.flush()
+                    except Exception:
+                        pass
+                else:
+                    existing_slot.booked_count += 1
+                if existing_slot and existing_slot.id:
+                    booking.slot_id = existing_slot.id
 
     db.commit()
     db.refresh(booking)

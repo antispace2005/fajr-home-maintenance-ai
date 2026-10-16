@@ -27,11 +27,11 @@ def setup_fresh_test_db():
 
 def run_all_tests():
     print("=" * 70)
-    print("🚀 RUNNING 12 COMPREHENSIVE VERIFICATION SCENARIOS LOCALLY")
+    print("🚀 RUNNING 15 COMPREHENSIVE VERIFICATION SCENARIOS LOCALLY")
     print("=" * 70)
     setup_fresh_test_db()
     passed = 0
-    total = 12
+    total = 15
 
     # -------------------------------------------------------------
     # Scenario 1: Standard Booking -> Auto Confirmed with Reference Number
@@ -311,6 +311,122 @@ def run_all_tests():
     assert ref1 in s12["reply"]
     assert "rejected" in s12["reply"].lower() or "status" in s12["reply"].lower()
     print(f"  ✅ PASS: Reference number lookup accurately retrieved live status.")
+    passed += 1
+
+    # -------------------------------------------------------------
+    # Scenario 13: Time Standardization Flow ("make it 3 pm")
+    # -------------------------------------------------------------
+    print("\n[Scenario 13] Time Standardization: Converts casual phrases into clean '{Day} at {HH:MM AM/PM}'")
+    from backend.app.services.booking_graph import standardize_appointment_time
+    t1 = standardize_appointment_time("make it 3 pm", current_preferred="Wednesday at 2:00 PM")
+    assert t1 == "Wednesday at 03:00 PM", f"Expected 'Wednesday at 03:00 PM', got '{t1}'"
+
+    t2 = standardize_appointment_time("Tuesday 10 am")
+    assert t2 == "Tuesday at 10:00 AM", f"Expected 'Tuesday at 10:00 AM', got '{t2}'"
+
+    # In-graph dynamic modification test
+    change_time_state = {
+        "customer_name": "Fatima Al Zaabi",
+        "customer_phone": "+971501112233",
+        "customer_address": "Al Reem Island, Abu Dhabi",
+        "service_name": "Plumbing Inspection",
+        "preferred_time": "Wednesday at 02:00 PM",
+        "discount_requested": False,
+        "discount_notes": None,
+        "is_confirmed_by_user": False,
+        "status": "AWAITING_CONFIRMATION",
+        "reference_no": None,
+        "summary_card": None,
+        "action_buttons": [],
+        "reply": "",
+        "user_message": "make it 3 pm",
+        "conversation_history": []
+    }
+    s13 = booking_agent_graph.invoke(change_time_state)
+    assert s13["preferred_time"] == "Wednesday at 03:00 PM", f"Expected 'Wednesday at 03:00 PM', got {s13['preferred_time']}"
+    assert s13["summary_card"]["time"] == "Wednesday at 03:00 PM"
+    assert s13["summary_card"]["requires_approval"] is True  # 3 PM is outside standard 2 PM slot
+    print("  ✅ PASS: 'make it 3 pm' correctly standardized to 'Wednesday at 03:00 PM' and marked for approval.")
+    passed += 1
+
+    # -------------------------------------------------------------
+    # Scenario 14: Free OpenStreetMap Nominatim Tool & Location Enforcement
+    # -------------------------------------------------------------
+    print("\n[Scenario 14] Location Verification via OpenStreetMap Nominatim and District Registry")
+    from backend.app.services.location_verifier import verify_abu_dhabi_location
+    dubai_check = verify_abu_dhabi_location("Dubai Marina")
+    assert dubai_check["is_valid"] is False
+    assert "dubai" in dubai_check["reason"].lower()
+
+    ad_check = verify_abu_dhabi_location("Corniche Road, Abu Dhabi")
+    assert ad_check["is_valid"] is True
+    assert "source" in ad_check
+
+    # Test in-graph rejection of outside-coverage address
+    outside_addr_state = {
+        "customer_name": "Omar",
+        "customer_phone": "0504445555",
+        "customer_address": None,
+        "service_name": "AC Servicing",
+        "preferred_time": "Tuesday at 10:00 AM",
+        "discount_requested": False,
+        "discount_notes": None,
+        "is_confirmed_by_user": False,
+        "status": "COLLECTING",
+        "reference_no": None,
+        "summary_card": None,
+        "action_buttons": [],
+        "reply": "",
+        "user_message": "I live in Dubai Marina",
+        "conversation_history": []
+    }
+    s14 = booking_agent_graph.invoke(outside_addr_state)
+    assert s14["customer_address"] is None  # Should not retain invalid address
+    assert "service area notice" in s14["reply"].lower() or "abu dhabi city" in s14["reply"].lower()
+    print("  ✅ PASS: Free OpenStreetMap location verifier strictly enforces Abu Dhabi city coverage.")
+    passed += 1
+
+    # -------------------------------------------------------------
+    # Scenario 15: Continuous Single-Sentence Field Parsing & Instant Submission Flow
+    # -------------------------------------------------------------
+    print("\n[Scenario 15] Continuous Single-Sentence Field Parsing (Salma flow) & Instant Confirmation")
+    turn1_state = {
+        "customer_name": None, "customer_phone": None, "customer_address": None,
+        "service_name": None, "preferred_time": None, "discount_requested": False,
+        "discount_notes": None, "is_confirmed_by_user": False, "status": "COLLECTING",
+        "reference_no": None, "summary_card": None, "action_buttons": [],
+        "reply": "", "user_message": "my name is salma i want to book wednesday at 2pm i live in fakestreak abudhabi my phone is +301096689888",
+        "conversation_history": []
+    }
+    s15_1 = booking_agent_graph.invoke(turn1_state)
+    assert s15_1["customer_name"] == "salma"
+    assert s15_1["customer_phone"] == "+301096689888"
+    assert s15_1["customer_address"] == "fakestreak abudhabi"
+    assert s15_1["preferred_time"] == "Wednesday at 02:00 PM"
+    assert s15_1["service_name"] is None
+    assert s15_1["status"] == "COLLECTING"
+
+    # Turn 2: User provides service -> instant summary card with AWAITING_CONFIRMATION
+    s15_2 = booking_agent_graph.invoke({
+        **s15_1,
+        "user_message": "Book AC Servicing (AED 200)"
+    })
+    assert s15_2["status"] == "AWAITING_CONFIRMATION"
+    assert s15_2["summary_card"] is not None
+    assert s15_2["summary_card"]["service"] == "AC Servicing"
+    assert s15_2["summary_card"]["price_aed"] == 200.0
+    assert s15_2["summary_card"]["time"] == "Wednesday at 02:00 PM"
+    assert "Yes, Confirm Booking" in s15_2["action_buttons"]
+
+    # Turn 3: User confirms -> saved immediately with reference number
+    s15_3 = booking_agent_graph.invoke({
+        **s15_2,
+        "user_message": "confirm"
+    })
+    assert s15_3["status"] == "CONFIRMED"
+    assert s15_3["reference_no"] is not None
+    assert s15_3["reference_no"].startswith("AD-2026-")
+    print(f"  ✅ PASS: Salma flow smoothly parsed all continuous fields, presented instant summary card, and confirmed with ref {s15_3['reference_no']}.")
     passed += 1
 
     print("\n" + "=" * 70)
