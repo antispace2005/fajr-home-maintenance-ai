@@ -4,6 +4,19 @@ An enterprise-ready, containerized AI assistant and field service management por
 
 ---
 
+## 🌐 Live Hosted Deployment (Microsoft Azure Serverless)
+
+The application is deployed live in production on **Microsoft Azure Container Apps (UAE North / `uaenorth`)**:
+
+* **Customer Web Assistant (Live URL)**: [https://fajr-maintenance-app.jollycliff-f57bde9d.uaenorth.azurecontainerapps.io/](https://fajr-maintenance-app.jollycliff-f57bde9d.uaenorth.azurecontainerapps.io/)
+* **Owner / Admin Portal (Direct URL)**: [https://fajr-maintenance-app.jollycliff-f57bde9d.uaenorth.azurecontainerapps.io/login](https://fajr-maintenance-app.jollycliff-f57bde9d.uaenorth.azurecontainerapps.io/login)
+  * **Email**: `admin@fajrmaintenance.ae`
+  * **Password**: `Admin123!`
+* **API Health Check**: [https://fajr-maintenance-app.jollycliff-f57bde9d.uaenorth.azurecontainerapps.io/api/health](https://fajr-maintenance-app.jollycliff-f57bde9d.uaenorth.azurecontainerapps.io/api/health)
+* **GitHub Repository**: [https://github.com/antispace2005/fajr-home-maintenance-ai](https://github.com/antispace2005/fajr-home-maintenance-ai)
+
+---
+
 ## 🌟 Key Capabilities & Highlights
 
 1. **Frictionless Customer Experience (`/`)**:
